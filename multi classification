@@ -1,0 +1,99 @@
+
+
+!pip install tensorflow tensorflow-datasets matplotlib pillow --quiet
+
+# Imports
+import tensorflow as tf
+import tensorflow_datasets as tfds
+from tensorflow.keras import layers, models
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from google.colab import files
+
+
+# Load small subset of Stanford Dogs dataset
+
+(ds_train, ds_test), ds_info = tfds.load(
+    'stanford_dogs',
+    split=['train[:10%]', 'test[:10%]'],  # only 10% for speed
+    as_supervised=True,
+    with_info=True
+)
+
+num_classes = ds_info.features['label'].num_classes
+class_names = ds_info.features['label'].names
+print(f" Number of dog breeds: {num_classes}")
+
+# Preprocessing
+
+IMG_SIZE = 224
+BATCH_SIZE = 32
+
+def format_image(image, label):
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    image = tf.keras.applications.mobilenet_v2.preprocess_input(image)
+    return image, label
+
+train_ds = ds_train.map(format_image).shuffle(1000).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+test_ds = ds_test.map(format_image).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
+# Load pretrained MobileNetV2
+
+base_model = tf.keras.applications.MobileNetV2(
+    input_shape=(IMG_SIZE, IMG_SIZE, 3),
+    include_top=False,
+    weights='imagenet'
+)
+base_model.trainable = False  # freeze for fast training
+
+# Build the classification model
+
+model = models.Sequential([
+    base_model,
+    layers.GlobalAveragePooling2D(),
+    layers.Dropout(0.3),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+model.summary()
+
+# Train quickly (only a few epochs)
+
+history = model.fit(
+    train_ds,
+    validation_data=test_ds,
+    epochs=3  # fast training
+)
+
+# Evaluate
+
+test_loss, test_acc = model.evaluate(test_ds)
+print(f"Test Accuracy: {test_acc*100:.2f}%")
+
+
+# Predict on your uploaded image
+
+uploaded = files.upload()
+
+for fn in uploaded.keys():
+    img = Image.open(fn).resize((IMG_SIZE, IMG_SIZE))
+    img_array = np.array(img)
+    img_array = tf.keras.applications.mobilenet_v2.preprocess_input(img_array)
+    img_array = np.expand_dims(img_array, axis=0)
+
+    preds = model.predict(img_array)
+    pred_class = np.argmax(preds[0])
+    pred_label = class_names[pred_class]
+    confidence = np.max(preds[0])
+
+    plt.imshow(img)
+    plt.axis('off')
+    plt.title(f"Predicted: {pred_label} ({confidence*100:.2f}%)")
+    plt.show()
