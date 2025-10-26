@@ -1,0 +1,120 @@
+!pip install tensorflow tensorflow-datasets --quiet
+
+import tensorflow as tf
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+import tensorflow_datasets as tfds
+import matplotlib.pyplot as plt
+import numpy as np
+from tensorflow.keras.preprocessing import image
+from google.colab import files
+
+print("TensorFlow version:", tf.__version__)
+print("GPU available:", tf.config.list_physical_devices('GPU'))
+
+(ds_train, ds_val), ds_info = tfds.load(
+    'tf_flowers',
+    split=['train[:80%]', 'train[80%:]'],
+    with_info=True,
+    as_supervised=True,
+)
+
+IMG_SIZE = 160
+BATCH_SIZE = 32
+
+def preprocess(image, label):
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    image = image / 255.0
+    return image, label
+
+AUTOTUNE = tf.data.AUTOTUNE
+
+train_ds = (ds_train
+            .shuffle(1000)
+            .map(preprocess, num_parallel_calls=AUTOTUNE)
+            .batch(BATCH_SIZE)
+            .prefetch(AUTOTUNE))
+
+val_ds = (ds_val
+          .map(preprocess, num_parallel_calls=AUTOTUNE)
+          .batch(BATCH_SIZE)
+          .prefetch(AUTOTUNE))
+
+num_classes = ds_info.features['label'].num_classes
+class_names = ds_info.features['label'].names
+print("Classes:", class_names)
+
+base_model = MobileNetV2(
+    weights='imagenet',
+    include_top=False,
+    input_shape=(IMG_SIZE, IMG_SIZE, 3)
+)
+base_model.trainable = False
+
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dropout(0.3)(x)
+predictions = Dense(num_classes, activation='softmax')(x)
+model = Model(inputs=base_model.input, outputs=predictions)
+
+model.compile(
+    optimizer=Adam(learning_rate=0.001),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+EPOCHS = 5
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS,
+    verbose=1
+)
+
+base_model.trainable = True
+for layer in base_model.layers[:-40]:
+    layer.trainable = False
+
+model.compile(
+    optimizer=Adam(learning_rate=1e-5),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+fine_tune_epochs = 3
+history_fine = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=fine_tune_epochs,
+    verbose=1
+)
+
+val_loss, val_acc = model.evaluate(val_ds)
+print(f"Final Validation Accuracy: {val_acc:.2f}")
+
+model.save("/content/mobilenetv2_tf_flowers.h5")
+print("Model saved as mobilenetv2_tf_flowers.h5")
+
+print("Please upload a flower image to classify.")
+uploaded = files.upload()
+
+for fname in uploaded.keys():
+    img_path = fname
+    print("Uploaded image:", img_path)
+
+    img = image.load_img(img_path, target_size=(IMG_SIZE, IMG_SIZE))
+    img_array = image.img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0) / 255.0
+
+    pred_probs = model.predict(img_array)
+    pred_class = np.argmax(pred_probs)
+    pred_name = class_names[pred_class]
+
+    plt.imshow(img)
+    plt.axis("off")
+    plt.title(f"Predicted: {pred_name}")
+    plt.show()
+
+    print(f"The model predicts this flower is a {pred_name}")
