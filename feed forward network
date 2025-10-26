@@ -1,0 +1,74 @@
+️# Import Libraries
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.datasets import make_moons
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+
+
+️# Create a Sample Dataset
+
+X, y = make_moons(n_samples=1000, noise=0.2, random_state=42)
+
+# Split into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# Normalize data for better training
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+
+model = Sequential([
+    Dense(16, activation='relu', input_shape=(2,)),
+    Dense(8, activation='relu'),
+    Dense(1, activation='sigmoid')  # Binary classification output
+])
+
+# Compile the model
+model.compile(optimizer=Adam(learning_rate=0.01),
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+
+history = model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=1, validation_split=0.2)
+
+
+loss, acc = model.evaluate(X_test, y_test)
+print(f"\n✅ Test Accuracy: {acc*100:.2f}%")
+
+
+# Create a mesh grid to visualize predictions
+x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
+y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
+xx, yy = np.meshgrid(np.linspace(x_min, x_max, 200),
+                     np.linspace(y_min, y_max, 200))
+
+# Predict on grid points
+Z = model.predict(np.c_[xx.ravel(), yy.ravel()])
+Z = Z.reshape(xx.shape)
+
+# Plot the decision boundary
+plt.figure(figsize=(8,6))
+plt.contourf(xx, yy, Z, levels=[0, 0.5, 1], cmap="coolwarm", alpha=0.6)
+plt.scatter(X_test[:, 0], X_test[:, 1], c=y_test, cmap="coolwarm", edgecolor='k')
+plt.title("Feed Forward Neural Network Decision Boundary")
+plt.xlabel("Feature 1")
+plt.ylabel("Feature 2")
+plt.show()
+
+#line plot
+plt.figure(figsize=(8,4))
+plt.plot(history.history['accuracy'], label='Train Accuracy')
+plt.plot(history.history['val_accuracy'], label='Val Accuracy')
+plt.title("Training Progress")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.legend()
+plt.show()
