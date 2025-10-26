@@ -1,0 +1,78 @@
+!pip install yfinance --quiet
+import yfinance as yf
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from sklearn.preprocessing import MinMaxScaler
+
+
+# Load Tesla stock data
+
+ticker = 'TSLA'
+data = yf.download(ticker, start='2015-01-01', end='2025-01-01')
+close_prices = data['Close'].values.reshape(-1, 1)
+
+
+# Normalize data
+
+scaler = MinMaxScaler(feature_range=(0,1))
+scaled_data = scaler.fit_transform(close_prices)
+
+
+# Prepare sequences for LSTM
+
+def create_sequences(data, seq_length=50):
+    X, y = [], []
+    for i in range(seq_length, len(data)):
+        X.append(data[i-seq_length:i])
+        y.append(data[i])
+    return np.array(X), np.array(y)
+
+SEQ_LENGTH = 50
+X, y = create_sequences(scaled_data, SEQ_LENGTH)
+
+split = int(0.8 * len(X))
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+
+# Build LSTM model
+
+model = Sequential([
+    LSTM(50, return_sequences=False, input_shape=(SEQ_LENGTH,1)),
+    Dense(1)
+])
+
+model.compile(optimizer='adam', loss='mean_squared_error')
+model.fit(X_train, y_train, epochs=10, batch_size=32, validation_split=0.1, verbose=1)
+
+
+# Predict
+
+predicted = model.predict(X_test)
+predicted_prices = scaler.inverse_transform(predicted)
+real_prices = scaler.inverse_transform(y_test)
+
+
+# Enhanced Visualization
+
+plt.figure(figsize=(14,6))
+
+# 1. Overlayed line + scatter
+plt.plot(real_prices, label='Real TSLA Price', color='blue', linewidth=2)
+plt.plot(predicted_prices, label='Predicted TSLA Price', color='red', linestyle='--')
+plt.scatter(range(len(predicted_prices)), predicted_prices, color='orange', s=15, label='Predicted Points')
+
+# 2. Fill between prediction and real price
+plt.fill_between(range(len(predicted_prices)), real_prices.flatten(), predicted_prices.flatten(), color='gray', alpha=0.2)
+
+# 3. Zoom on last 100 days
+plt.xlim(len(real_prices)-100, len(real_prices))
+
+plt.title('Tesla (TSLA) Stock Price Prediction')
+plt.xlabel('Time')
+plt.ylabel('Price')
+plt.legend()
+plt.grid(alpha=0.3)
+plt.show()
