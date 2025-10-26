@@ -1,0 +1,106 @@
+!pip install tensorflow tensorflow-datasets keras-tuner matplotlib pillow --quiet
+
+import tensorflow as tf
+import tensorflow_datasets as tfds
+from tensorflow.keras import layers, models
+import keras_tuner as kt
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from google.colab import files
+
+
+# Load small Stanford Dogs subset
+
+(ds_train, ds_test), ds_info = tfds.load(
+    'stanford_dogs',
+    split=['train[:5%]', 'test[:5%]'],  # tiny subset for speed
+    as_supervised=True,
+    with_info=True
+)
+
+class_names = ds_info.features['label'].names
+num_classes = ds_info.features['label'].num_classes
+print(f"Dog breeds: {num_classes}")
+
+IMG_SIZE = 224
+BATCH_SIZE = 16
+
+def preprocess(image, label):
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    image = tf.keras.applications.mobilenet_v2.preprocess_input(image)
+    return image, label
+
+train_ds = ds_train.map(preprocess).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+test_ds = ds_test.map(preprocess).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
+
+# Model-building function (tune only learning rate)
+
+def build_model(hp):
+    base_model = tf.keras.applications.MobileNetV2(
+        input_shape=(IMG_SIZE, IMG_SIZE, 3),
+        include_top=False,
+        weights='imagenet'
+    )
+    base_model.trainable = False
+    
+    model = models.Sequential([
+        base_model,
+        layers.GlobalAveragePooling2D(),
+        layers.Dropout(0.3),
+        layers.Dense(num_classes, activation='softmax')
+    ])
+    
+    lr = hp.Choice('learning_rate', [1e-2, 1e-3, 1e-4])
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    return model
+
+
+# Hyperparameter tuning
+
+tuner = kt.Hyperband(
+    build_model,
+    objective='val_accuracy',
+    max_epochs=3,
+    factor=2,
+    directory='fast_mobilenet_tuner',
+    project_name='dog_breed_fast'
+)
+
+stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=1)
+
+tuner.search(train_ds, validation_data=test_ds, callbacks=[stop_early], verbose=1)
+
+best_hps = tuner.get_best_hyperparameters(1)[0]
+print("Best Learning Rate:", best_hps.get('learning_rate'))
+
+
+# Train final model
+
+model = tuner.hypermodel.build(best_hps)
+history = model.fit(train_ds, validation_data=test_ds, epochs=3)
+
+
+# Predict on uploaded image
+
+uploaded = files.upload()
+for fn in uploaded.keys():
+    img = Image.open(fn).resize((IMG_SIZE, IMG_SIZE))
+    img_array = np.array(img)
+    img_array = tf.keras.applications.mobilenet_v2.preprocess_input(img_array)
+    img_array = np.expand_dims(img_array, axis=0)
+
+    preds = model.predict(img_array)
+    pred_class = np.argmax(preds[0])
+    pred_label = class_names[pred_class]
+    confidence = np.max(preds[0])
+
+    plt.imshow(img)
+    plt.axis('off')
+    plt.title(f"Predicted: {pred_label} ({confidence*100:.2f}%)")
+    plt.show()
