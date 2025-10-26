@@ -1,0 +1,73 @@
+#  Step 1: Install & Import
+!pip install -q tensorflow tensorflow-datasets
+
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+from google.colab import files
+
+#  Step 2: Load a SMALL Subset of Dataset (FAST)
+(ds_train, ds_test), ds_info = tfds.load(
+    'cats_vs_dogs',
+    split=['train[:10%]', 'train[10%:12%]'],  # Only 10% for train, 2% for test
+    as_supervised=True,
+    with_info=True
+)
+
+#  Step 3: Preprocessing
+IMG_SIZE = (64, 64)  # Smaller image = faster processing
+
+def preprocess(image, label):
+    image = tf.image.resize(image, IMG_SIZE)
+    image = tf.cast(image, tf.float32) / 255.0
+    return image, label
+
+BATCH_SIZE = 32
+
+ds_train = ds_train.map(preprocess).shuffle(500).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+ds_test = ds_test.map(preprocess).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
+#  Step 4: Lightweight CNN Model
+model = tf.keras.Sequential([
+    tf.keras.layers.Conv2D(16, (3,3), activation='relu', input_shape=(64, 64, 3)),
+    tf.keras.layers.MaxPooling2D(2,2),
+
+    tf.keras.layers.Conv2D(32, (3,3), activation='relu'),
+    tf.keras.layers.MaxPooling2D(2,2),
+
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(64, activation='relu'),
+    tf.keras.layers.Dense(1, activation='sigmoid')
+])
+
+#  Step 5: Compile & Train (FAST)
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+history = model.fit(ds_train, validation_data=ds_test, epochs=3)  # Fewer epochs
+
+# Step 6: Evaluate
+loss, acc = model.evaluate(ds_test)
+print(f"Test Accuracy: {acc:.2f}")
+
+# Step 7: Upload and Predict (show clear image)
+uploaded = files.upload()
+
+for fname in uploaded.keys():
+    # Load original image for display
+    original_img = Image.open(fname).convert("RGB")
+
+    # Resize copy for prediction
+    img = original_img.resize(IMG_SIZE)
+    img_array = np.expand_dims(np.array(img) / 255.0, axis=0)
+
+    # Predict
+    pred = model.predict(img_array)[0][0]
+    label = "Dog" if pred > 0.5 else "Cat"
+
+    # Show the original high-res image
+    plt.imshow(original_img)
+    plt.axis('off')
+    plt.title(f"Prediction: {label} ({pred:.2f})")
+    plt.show()
